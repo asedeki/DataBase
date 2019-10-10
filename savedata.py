@@ -14,7 +14,7 @@ def opt():
                                        """)
     #
     parser.add_option("-f", action="store", dest="data_file", type="string")
-    parser.add_option("-r", action="store", dest="remarque", type="string",
+    parser.add_option("-r", action="store", dest="remarque", type="string", default="",
                       help="le champs remarque de la BD PARAMETERS")
 
     (_val, args) = parser.parse_args()
@@ -60,8 +60,8 @@ class Quasi1dData():
     susceptibilities = {}
 
     def __new__(cls, *vargs, **kwargs):
-        if cls.database is None:
-            cls.database = super(Quasi1dData, cls).__new__(cls)
+        # if cls.database is None:
+        cls.database = super(Quasi1dData, cls).__new__(cls)
         return cls.database
 
     def __init__(self, database, **kwargs):
@@ -81,6 +81,7 @@ class Quasi1dData():
             self.susceptibilities[param[0]] = param[ik +
                                                     1] if ik is not None else None
 
+        self.request = {t: {} for t in self.db_param["table"].keys()}
         self.db_param['name'] = database
         self.parameters.update(kwargs)
         self.connect()
@@ -137,6 +138,7 @@ class Quasi1dData():
         rows = {r.split()[0] for r in self.db_param['table'][table]}
         # input(rows)
         # input(set(data))
+        # input(data.values())
         assert(
             set(data).issubset(rows)
         )
@@ -147,9 +149,8 @@ class Quasi1dData():
             ({",".join(rows)})
             VALUES ({",".join(val)})
         """
-        # print(values)
-        # # input(request)
-
+        self.request[table].setdefault(request, [])
+        self.request[table][request].append(values)
         self.cursor.execute(request, values)
 
     def save_parameters(self, parameters, remarque='scipy.integrate.solve_ivp'):
@@ -174,11 +175,12 @@ class Quasi1dData():
                 ({",".join(params)})
                 VALUES ({",".join(val)})
             """
-
+            #self.request["PARAMETERS"].setdefault(request, [])
+            # print(self.request["PARAMETERS"])
+            # self.request["PARAMETERS"][request].append(values)
             # input(request)
             self.cursor.execute(request, values)
             self.connection.commit()
-            # input(self.get_parameters_id(**parameters))
             return done, self.get_parameters_id(**parameters)[0]
 
     def get_parameters_id(self, **parameters):
@@ -318,16 +320,6 @@ def update_interaction(db, idT, data):
                         # db.save_data('INTERACTION', values)
                         all_values.append(values.copy())
 
-    # def execute(val):
-    #     print(val)
-    #     db.save_data(val)
-    #     print('==========================')
-    #     return true
-
-    # with ccf.ThreadPoolExecutor(max_workers=8) as executor:
-    #     # for i in range(8):
-    #     #     update = executor.submit(execute, all_values[i])
-
     update = [db.save_data('INTERACTION', v) for v in all_values]
     db.connection.commit()
 
@@ -337,16 +329,9 @@ def update_susceptibility(db, idT, data):
     values = {}
     for T in idT.keys():
         if idT[T][0][0]:
-
             values["parametersId"] = idT[T][0][1]
-            for v in data[T]['susc'].values():
-                values.update(v)
-            n_tmp = {}
-            for kvi in values.keys():
-                k = kvi.replace('(', '_')
-                k = k.replace(')', '')
-                n_tmp[k] = values[kvi]
-            all_values.append(n_tmp.copy())
+            values.update(data[T]['susc'])
+            all_values.append(values.copy())
     update = [db.save_data('SUSCEPTIBILITY', v) for v in all_values]
     db.connection.commit()
 
@@ -384,8 +369,9 @@ if __name__ == "__main__":
     db = Quasi1dData(database=_O.database)
     db.create_all()
     data, idT = main(db, _O)
-    selected_names, result = db.get_data(table="PARAMETERS")
-    print(result)
+    # selected_names, result = db.get_data(table="PARAMETERS")
+    # print(result)
+
     # TT = random.choice(list(idT.keys()))
     # print(TT)
     # condition = {
