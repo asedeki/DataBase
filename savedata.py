@@ -14,6 +14,9 @@ def opt():
                                        """)
     #
     parser.add_option("-f", action="store", dest="data_file", type="string")
+    parser.add_option("-r", action="store", dest="remarque", type="string",
+                      help="le champs remarque de la BD PARAMETERS")
+
     (_val, args) = parser.parse_args()
     return _val
 
@@ -35,19 +38,21 @@ class Quasi1dData():
                            "time text default NULL",
                            "remarque text default NULL"
                            ],
-            "INTERACTION": ["parametersId int",
+            "INTERACTION": ["interactionId INTEGER NOT NULL",
+                            "parametersId INTEGER NOT NULL",
                             "g1 float",
                             "g2 float",
                             "g3 float"
                             ],
-            "SUSCEPTIBILITY": ["parametersId int",
-                               "CSDW_0 float", "CSDW_pi float",
-                               "CBDW_0 float", "CBDW_pi float",
-                               "SSDW_0 float", "SSDW_pi float",
-                               "SBDW_0 float", "SBDW_pi float",
-                               "SS_s float", "SS_dxy float", "SS_dx2y2 float", "SS_g float", "SS_i float",
-                               "ST_px float", "ST_py float", "ST_h float", "ST_f float"
-                               ]
+            "SUSCEPTIBILITY": [
+                "parametersId INTEGER NOT NULL",
+                "CSDW_0 float", "CSDW_pi float",
+                "CBDW_0 float", "CBDW_pi float",
+                "SSDW_0 float", "SSDW_pi float",
+                "SBDW_0 float", "SBDW_pi float",
+                "SS_s float", "SS_dxy float", "SS_dx2y2 float", "SS_g float", "SS_i float",
+                "ST_px float", "ST_py float", "ST_h float", "ST_f float"
+            ]
         }
     }
     parameters = {}
@@ -87,17 +92,40 @@ class Quasi1dData():
         # self.cursor.execute("PRAGMA foreign_keys = ON")
 
     def create_table(self, table="PARAMETERS"):
-        keys = ", ".join(
-            self.db_param["table"][table]
-        )
+
+        if table == "PARAMETERS":
+            keys = f"""
+                        {table.lower()}Id
+                    INTEGER PRIMARY KEY AUTOINCREMENT UNIQUE,
+                    {", ".join(
+                        self.db_param["table"][table]
+                    )}
+                    """
+
+        elif table == "INTERACTION":
+            keys = f"""
+                {", ".join(
+                        self.db_param["table"][table]
+                )},
+                PRIMARY KEY({table.lower()}Id,parametersId),
+                FOREIGN KEY (parametersId) REFERENCES PARAMETERS(parametersId) 
+                ON DELETE CASCADE ON UPDATE NO ACTION
+            """
+        else:
+            keys = f"""
+                {", ".join(
+                        self.db_param["table"][table]
+                )},
+                PRIMARY KEY(parametersId),
+                FOREIGN KEY (parametersId) REFERENCES PARAMETERS(parametersId) 
+                ON DELETE CASCADE ON UPDATE NO ACTION
+            """
         request = f"""
         CREATE TABLE IF NOT EXISTS {table} (
-            {table.lower()}Id
-            INTEGER PRIMARY KEY AUTOINCREMENT UNIQUE,
             {keys}
-            )
+            );
         """
-        # # input(request)
+        # input(request)
         self.cursor.execute(request)
         self.connection.commit()
 
@@ -107,6 +135,8 @@ class Quasi1dData():
 
     def save_data(self, table, data):
         rows = {r.split()[0] for r in self.db_param['table'][table]}
+        # input(rows)
+        # input(set(data))
         assert(
             set(data).issubset(rows)
         )
@@ -122,7 +152,7 @@ class Quasi1dData():
 
         self.cursor.execute(request, values)
 
-    def save_parameters(self, parameters):
+    def save_parameters(self, parameters, remarque='scipy.integrate.solve_ivp'):
         assert(
             set(parameters).issubset(
                 set(self.parameters.keys())
@@ -130,7 +160,7 @@ class Quasi1dData():
         )
 
         done = True
-        parameters['remarque'] = 'scipy.integrate.solve_ivp'
+        parameters['remarque'] = remarque
         parameters_id = self.get_parameters_id(**parameters)
         # input(f"idp = {parameters_id}")
         if parameters_id != -1:
@@ -195,11 +225,16 @@ class Quasi1dData():
         result = self.cursor.execute(request)
         return selected_names, result.fetchall()
 
-    def get_data(self, *selected_names, table="PARAMETERS", **parameters):
-        if parameters == {}:
-            condition = "TRUE"
+    def get_data(self, table, * selected_names, **parameters):
+        print(selected_names)
+        if len(selected_names) != 0:
+            row = ",".join(selected_names)
         else:
+            row = "* "
+        if parameters == {}:
             condition = ""
+        else:
+            condition = "WHERE  "
             for param, value in parameters.items():
                 condition += f"{param} {value[0]} {value[1]} and "
             condition = condition[:-4]
@@ -208,12 +243,12 @@ class Quasi1dData():
                               for k in self.db_param["table"][table]
                               ]
         request = f"""
-            SELECT {",".join(selected_names)}
-            FROM {table} WHERE
+            SELECT {row}
+            FROM {table}
             {condition}
         """
         # order by {",".join(selected_names)}
-        # # input(request)
+        input(request)
         result = self.cursor.execute(request)
         return selected_names, result.fetchall()
 
@@ -226,7 +261,7 @@ class Quasi1dData():
         self.connection.commit()
 
 
-def update_parameters(db, file):
+def update_parameters(db, file, remarque):
     interaction = {}
     susceptibilities = {}
     parameters = {}
@@ -255,7 +290,8 @@ def update_parameters(db, file):
         interaction[T] = data[T]["interaction"]
         del data[T]["interaction"]
         susceptibilities[T] = data[T]
-        idT[T] = [db.save_parameters(parameters), parameters["Np"]]
+        idT[T] = [db.save_parameters(
+            parameters, remarque=remarque), parameters["Np"]]
     return idT, interaction, susceptibilities
 
 # @jit
@@ -269,12 +305,15 @@ def update_interaction(db, idT, data):
             values["parametersId"] = idT[T][0][1]
             Np = int(idT[T][1])
             print(T)
+            int_id = 0
             for i in range(Np):
                 for j in range(Np):
                     for k in range(Np):
+                        values["interactionId"] = int_id
                         values["g1"] = data[T]["g1"][i, j, k]
                         values["g2"] = data[T]["g2"][i, j, k]
                         values["g3"] = data[T]["g3"][i, j, k]
+                        int_id += 1
                         # # input(values['g1'])
                         # db.save_data('INTERACTION', values)
                         all_values.append(values.copy())
@@ -321,7 +360,7 @@ def main(db, _O):
     if os.path.exists(_O.data_file):
         if os.path.isfile(_O.data_file):
             id_param_T, interaction, susceptibilities = update_parameters(
-                db, _O.data_file
+                db, _O.data_file, _O.remarque
             )
             update_susceptibility(db, id_param_T, susceptibilities)
             update_interaction(db, id_param_T, interaction)
@@ -330,10 +369,10 @@ def main(db, _O):
         # # input(files)
         for f in files:
             id_param_T, interaction, susceptibilities = update_parameters(
-                db, f)
+                db, f, _O.remarque)
             update_susceptibility(db, id_param_T, susceptibilities)
             update_interaction(db, id_param_T, interaction)
-
+    print(f"temps exec = {time.time()-tini}")
     return interaction, id_param_T
 
     print(f"temps_exec = {time.time()-tini}")
@@ -345,31 +384,25 @@ if __name__ == "__main__":
     db = Quasi1dData(database=_O.database)
     db.create_all()
     data, idT = main(db, _O)
+    selected_names, result = db.get_data(table="PARAMETERS")
+    print(result)
+    # TT = random.choice(list(idT.keys()))
+    # print(TT)
+    # condition = {
+    #     "parametersId": ['=', idT[TT][0][1]]
+    # }
+    # selected_names, result = db.get_data(
+    #      "interactionId", "g1", table="INTERACTION", **condition)
 
-    TT = random.choice(list(idT.keys()))
-    print(TT)
-    condition = {
-        "parametersId": ['=', idT[TT][0][1]]
-    }
-    # con = sq.connect('data/quasi1d.db')
-    # c = con.cursor()
-    # c.execute('pragma encoding=UTF16')
-    # c.execute('select * from PARAMETERS').fetchone()
+    # g_t = {i: g for i, g in result}
+    # g1 = np.zeros((32, 32, 32), float)
+    # ir = min(g_t)
+    # for i in range(32):
+    #     for j in range(32):
+    #         for k in range(32):
+    #             g1[i, j, k] = g_t[ir]
 
-    selected_names, result = db.get_data(
-        "interactionId", "g1", table="INTERACTION", **condition)
-
-    g_t = {i: g for i, g in result}
-    g1 = np.zeros((32, 32, 32), float)
-    ir = min(g_t)
-    for i in range(32):
-        for j in range(32):
-            for k in range(32):
-                g1[i, j, k] = g_t[ir]
-                # # input(f"{g1[i, j, k]},  {data[100]['g1'][i, j, k]}")
-                # assert ir == result[ir][1]
-                ir += 1
-    print(np.all(g1 - data[TT]['g1'] == 0.0))
+    #print(np.all(g1 - data[TT]['g1'] == 0.0))
 
     # str_result = ""
     # for r in result:
